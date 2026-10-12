@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.local
+.env
+
+# Local environment files, if you keep any alongside the repo.
+.env.*
+!.env.example
