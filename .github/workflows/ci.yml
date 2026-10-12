@@ -1,0 +1,82 @@
+name: CI
+
+# Runs on every push to a branch and every PR. This is the gate that catches a
+# broken build before it reaches main, so a type error is never in the history
+# with the only fix being a follow-up commit.
+on:
+  push:
+    branches-ignore:
+      - main
+  pull_request:
+
+# A newer push to the same branch makes an in-flight run obsolete.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches the Node version BB 0.44 bundles, so a type or runtime
+          # difference between CI and a real BB host shows up here.
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install the BB CLI
+        run: npm install --global bb-app@0.44.0
+
+      - name: Build the plugin
+        run: bb plugin build
+      # The artifact is the real deliverable; assert it exists rather than
+      # trusting the command's exit code alone.
+      - name: Assert build artifact exists
+        run: |
+          set -euo pipefail
+          for f in dist/server.js dist/server.meta.json; do
+            test -s "$f" || { echo "missing or empty: $f"; exit 1; }
+            echo "ok: $f"
+          done
+
+  # The whole point of this plugin is that it does not read another plugin's
+  # credentials. A regression there would be silent, so it is asserted rather
+  # than trusted to review.
+  no-bb-spotify-dependency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assert no read of bb-spotify's storage or secrets
+        run: |
+          set -euo pipefail
+          # Strip comments before scanning: this codebase documents at length WHY
+          # it no longer depends on bb-spotify, so a bare `grep bb-spotify`
+          # matches prose and fails on its own documentation. Only real code
+          # lines matter.
+          #
+          # Matches, in code only:
+          #   - a settings/db lookup keyed on the `spotify` plugin id
+          #   - its secrets directory under ~/.bb/plugins/
+          #   - an import of a bb-spotify package
+          ./scripts/check-standalone.sh
